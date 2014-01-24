@@ -1,0 +1,12 @@
+SpiNN Test Driver
+=================
+
+A tool for performing experiments on the SpiNNaker network.  Consists of two
+components:
+
+* A SpiNNaker application (`./spinnaker_app/` which generates/consumes traffic
+  on the network according to a specification.
+* A Python tool (`./test_generator/`) which generates specifications for the
+  application and processes the results.
+
+
