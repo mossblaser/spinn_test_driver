@@ -1,3 +1,7 @@
-app_fill simple.aplx all 1-16 16
-sleep 10
-app_stop 16
+boot scamp.boot spin2.conf
+sload /tmp/data 70000000
+app_fill spinn_test_driver.aplx all 1-16 16
+sleep 2
+iobuf 1
+iobuf 2
+iobuf 3
