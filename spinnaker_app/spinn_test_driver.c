@@ -77,8 +77,9 @@ config_root_t config_root;
 /**
  * Core-local versions of the source/sink data structures for this core.
  */
-config_source_t config_sources[MAX_SOURCES_PER_CORE];
-config_sink_t   config_sinks[MAX_SINKS_PER_CORE];
+config_source_t       config_sources[MAX_SOURCES_PER_CORE];
+config_sink_t         config_sinks[MAX_SINKS_PER_CORE];
+config_router_entry_t config_router_entries[MAX_ROUTES_PER_CORE];
 
 
 /**
@@ -106,20 +107,32 @@ load_config(void)
 		+ sizeof(config_root_t)
 		+ sizeof(config_source_t) * config_root.num_sources
 	);
+	config_router_entry_t *config_router_entries_sdram_addr = (config_router_entry_t *)(
+		((uint)config_root_sdram_addr)
+		+ sizeof(config_root_t)
+		+ sizeof(config_source_t) * config_root.num_sources
+		+ sizeof(config_sink_t)   * config_root.num_sinks
+	);
 	spin1_memcpy( &config_sources
 	            , config_sources_sdram_addr
 	            , sizeof(config_source_t) * config_root.num_sources
 	            );
 	spin1_memcpy( &config_sinks
 	            , config_sinks_sdram_addr
-	            , sizeof(config_sink_t) *  config_root.num_sinks
+	            , sizeof(config_sink_t) * config_root.num_sinks
+	            );
+	spin1_memcpy( &config_router_entries
+	            , config_router_entries_sdram_addr
+	            , sizeof(config_router_entry_t) * config_root.num_router_entries
 	            );
 	
-	io_printf( IO_BUF, "Loaded root config from 0x%08x with %d sources and %d sinks\n"
+	io_printf( IO_BUF, "Loaded root config from 0x%08x with %d sources, %d sinks and %d router entries.\n"
 	         , (uint)config_root_sdram_addr
 	         , config_root.num_sources
 	         , config_root.num_sinks
+	         , config_root.num_router_entries
 	         );
+}
 
 
 /**
@@ -133,21 +146,101 @@ load_config(void)
 void
 store_results(void)
 {
+	// Turn on LED until results written
+	if (leadAp)
+		spin1_led_control(LED_ON(BLINK_LED));
+	
 	// TODO: Read counters
 	
+	// Copy root config results back.
 	config_root_t *config_root_sdram_addr = CONFIG_ROOT_SDRAM_ADDR(spin1_get_core_id());
-	spin1_memcpy( config_sinks_sdram_addr
-	            , &config_sinks
-	            , sizeof(config_root)
-	              + sizeof(config_source_t) * config_root.num_sources
-	              + sizeof(config_sink_t)   * config_root.num_sinks
+	spin1_memcpy(config_root_sdram_addr, &config_root, sizeof(config_root_t));
+	
+	// Copy source results back.
+	config_source_t *config_sources_sdram_addr = (config_source_t *)( ((uint)CONFIG_ROOT_SDRAM_ADDR(spin1_get_core_id()))
+	                                                                  + sizeof(config_root_t)
+	                                                                )
+	                                           ;
+	spin1_memcpy( config_sources_sdram_addr
+	            , &config_sources
+	            , sizeof(config_source_t) * config_root.num_sources
 	            );
 	
-	io_printf( IO_BUF, "Stored results back into 0x%08x for %d sources and %d sinks\n"
+	// Copy sink results back.
+	config_sink_t *config_sinks_sdram_addr = (config_sink_t *)( ((uint)CONFIG_ROOT_SDRAM_ADDR(spin1_get_core_id()))
+	                                                            + sizeof(config_root_t)
+	                                                            + sizeof(config_source_t) * config_root.num_sources
+	                                                          )
+	                                         ;
+	spin1_memcpy( config_sinks_sdram_addr
+	            , &config_sinks
+	            , sizeof(config_sink_t) * config_root.num_sinks
+	            );
+	
+	// Note that routes are not copied back because they aren't changed.
+	
+	io_printf( IO_BUF, "Stored results back into 0x%08x.\n"
 	         , (uint)config_root_sdram_addr
-	         , config_root.num_sources
-	         , config_root.num_sinks
 	         );
+	
+	// Turn off LED on completion.
+	if (leadAp)
+		spin1_led_control(LED_OFF(BLINK_LED));
+}
+
+
+/******************************************************************************
+ * Router config/state access functions
+ ******************************************************************************/
+
+// Router configuration block
+volatile uint *rtr_control = ((uint *)RTR_BASE_UNBUF) + RTR_CONTROL;
+
+// The original state of the rotuer configuration before the experiment was
+// started.
+uint rtr_control_orig_state;
+
+
+/**
+ * Load the routing tables and router parameters as required by the current
+ * experiment. The existing router parameters are stored into the
+ * rtr_control_orig_state to be restored by cleanup_router at the end of the
+ * experiment.
+ */
+void
+setup_router(void)
+{
+	// Install the router entries
+	for (int i = 0; i < config_root.num_router_entries; i++) {
+		if (!spin1_set_mc_table_entry( i
+		                             , config_router_entries[i].key
+		                             , config_router_entries[i].mask
+		                             , config_router_entries[i].route
+		                             )) {
+			io_printf( IO_BUF, "Could not load routing table entry %d with key 0x%08x"
+			         , i
+			         , config_router_entries[i].key
+			         );
+		}
+	}
+	
+	// Store the current router configuration
+	rtr_control_orig_state = *rtr_control;
+	
+	// Set up the packet drop timeout
+	(*rtr_control) = ((*rtr_control) & ~0xFF000000)
+	                 | (config_root.rtr_drop_e<<4 | config_root.rtr_drop_m) << 24;
+}
+
+
+/**
+ * Restore the router's settings prior to ending the experiment.
+ */
+void
+cleanup_router(void)
+{
+	// Restore router configuration
+	(*rtr_control) = rtr_control_orig_state;
 }
 
 
@@ -163,7 +256,7 @@ uint simulation_ticks = 0u;
 /**
  * Is the simulation currently warming up?
  */
-bool simulation_warmup = TRUE;
+volatile bool simulation_warmup = true;
 
 
 /******************************************************************************
@@ -171,12 +264,18 @@ bool simulation_warmup = TRUE;
  ******************************************************************************/
 
 
-static void
-generate_packet(uint routing_key)
+void
+generate_packet(uint source_index)
 {
-	if (!spin1_send_mc_packet(routing_key, 0u, false)) {
-		io_printf(io_buf, "Could not generate packet with key 0x%08x at time %d (%s).\n"
-		         , config_sources[i].routing_key
+	if (!simulation_warmup)
+		config_sources[source_index].result_packets_generated ++;
+	
+	if (spin1_send_mc_packet(config_sources[source_index].routing_key, 0u, false)) {
+		if (!simulation_warmup)
+			config_sources[source_index].result_packets_sent ++;
+	} else {
+		io_printf(IO_BUF, "Could not generate packet with key 0x%08x at time %d (%s).\n"
+		         , config_sources[source_index].routing_key
 		         , simulation_ticks
 		         , simulation_warmup ? "warmup" : "post-warmup"
 		         );
@@ -191,22 +290,27 @@ void
 on_timer_tick(uint _1, uint _2)
 {
 	// Experiment management
-	if (simulation_warmup && simulation_ticks >= config_root.warmup_duration) {
+	if (simulation_warmup && simulation_ticks == 0) {
+		io_printf(IO_BUF, "Warmup starting...\n");
+		simulation_ticks ++;
+	} else if (simulation_warmup && simulation_ticks >= config_root.warmup_duration) {
 		simulation_ticks = 0u;
-		simulation_warmup = FALSE;
+		simulation_warmup = false;
+		io_printf(IO_BUF, "Warmup ended, starting main experiment...\n");
 	} else if (!simulation_warmup && simulation_ticks >= config_root.duration) {
 		spin1_stop();
+		return;
+	} else {
+		simulation_ticks ++;
 	}
 	
 	// Show current status using LEDs
 	if (leadAp) {
-		bool led_on = simulation_ticks % (LED_BLINK_PERIOD/TIMER_TICK_PERIOD);
-		
-		// Drive with 50% brightness in warmup
+		// Drive with 1/16% brightness in warmup
 		if (simulation_warmup)
-			spin1_led_control((led_on && simulation_ticks%2) ? LED_ON(BLINK_LED) : LED_OFF(BLINK_LED));
+			spin1_led_control((simulation_ticks%16 == 0) ? LED_ON(BLINK_LED) : LED_OFF(BLINK_LED));
 		else
-			spin1_led_control(led_on ? LED_ON(BLINK_LED) : LED_OFF(BLINK_LED));
+			spin1_led_control(LED_ON(BLINK_LED));
 	}
 	
 	
@@ -215,8 +319,7 @@ on_timer_tick(uint _1, uint _2)
 		switch (config_sources[i].temporal_dist) {
 			case TEMPORAL_DIST_BERNOULLI:
 				if (((float)rand() / (float)RAND_MAX) < config_sources[i].temporal_dist_data.bernoulli_packet_prob) {
-					generate_packet(config_sources[i].routing_key);
-					config_sources[i].result_packets_sent();
+					generate_packet(i);
 				}
 				break;
 			
@@ -256,8 +359,8 @@ on_mc_packet_received(uint key, uint payload)
 	uint max    = config_root.num_sinks-1;
 	uint cursor = min + ((max-min)/2);
 	
-	while (min < max && config_sinks[cursor].key != key) {
-		if (key < config_sinks[cursor].key) {
+	while (min < max && config_sinks[cursor].routing_key != key) {
+		if (key < config_sinks[cursor].routing_key) {
 			max = cursor - 1;
 		} else {
 			min = cursor + 1;
@@ -266,10 +369,10 @@ on_mc_packet_received(uint key, uint payload)
 	}
 	
 	// Increment the counter if a match was found
-	if (config_sinks[cursor].key == key) {
-		config_sinks[cursor].result_packets_arrived++
+	if (config_sinks[cursor].routing_key == key) {
+		config_sinks[cursor].result_packets_arrived++;
 	} else {
-		io_printf(IO_BUF, "Got unexpected packet with routing key = 0x%08x.\n", key)
+		io_printf(IO_BUF, "Got unexpected packet with routing key = 0x%08x.\n", key);
 	}
 }
 
@@ -293,17 +396,25 @@ c_main()
 	init_core_map();
 	spin1_application_core_map(SYSTEM_WIDTH, SYSTEM_HEIGHT, core_map);
 	
-	// Set up timer
-	spin1_set_timer_tick(TIMER_TICK_PERIOD);
-	spin1_callback_on(TIMER_TICK, on_timer_tick, 3);
-	
 	// Accept packets freely from the network
 	spin1_callback_on(MC_PACKET_RECEIVED, on_mc_packet_received, -1);
 	
 	// Load this core's experimental configuration from SDRAM
 	load_config();
 	
+	// Set up timer
+	spin1_set_timer_tick(config_root.tick_microseconds);
+	spin1_callback_on(TIMER_TICK, on_timer_tick, 3);
+	
+	setup_router();
+	
+	// Report that we're ready
+	io_printf(IO_BUF, "Waiting for spin1_start barrier...\n");
+	
+	// Run the experiment
 	spin1_start();
+	
+	cleanup_router();
 	
 	store_results();
 }

@@ -5,22 +5,13 @@
 #ifndef SPINN_TEST_DRIVER_H
 #define SPINN_TEST_DRIVER_H
 
-/**
- * The timer period to use (microseconds)
- */
-#define TIMER_TICK_PERIOD 500000u
+#include <stdbool.h>
 
 
 /**
  * The number of the LED to blink.
  */
 #define BLINK_LED 1
-
-
-/**
- * How frequently should the LED blink (microseconds)
- */
-#define LED_BLINK_PERIOD 500000u
 
 
 /**
@@ -59,24 +50,27 @@
  ******************************************************************************/
 
 /**
- * Maximum number of source/sink structures per core. Used to statically
- * allocate sufficient memory for these structures in a core's RAM.
+ * Maximum number of source/sink/router entry structures per core. Used to
+ * statically allocate sufficient memory for these structures in a core's RAM.
  */
 #define MAX_SOURCES_PER_CORE 256u
 #define MAX_SINKS_PER_CORE   256u
+#define MAX_ROUTES_PER_CORE  1000u
 
 /**
  * A macro which yields the address in SDRAM of a core's config_root. Core 1
  * will have its config root at the base of SDRAM.
  */
-#define CONFIG_ROOT_SDRAM_ADDR(core) ( (config_root_t *)((SDRAM_BASE_UNBUF)   \
-                                       + (core-1) * ( sizeof(config_root_t)   \
-                                                    + sizeof(config_source_t) \
-                                                      * MAX_SOURCES_PER_CORE  \
-                                                    + sizeof(config_sink_t)   \
-                                                      * MAX_SINKS_PER_CORE    \
-                                                    )                         \
-                                       )                                      \
+#define CONFIG_ROOT_SDRAM_ADDR(core) ( (config_root_t *)((SDRAM_BASE_UNBUF)          \
+                                       + (core-1) * ( sizeof(config_root_t)          \
+                                                    + sizeof(config_source_t)        \
+                                                      * MAX_SOURCES_PER_CORE         \
+                                                    + sizeof(config_sink_t)          \
+                                                      * MAX_SINKS_PER_CORE           \
+                                                    + sizeof(config_router_entry_t)  \
+                                                      * MAX_ROUTES_PER_CORE          \
+                                                    )                                \
+                                       )                                             \
                                      )
 
 
@@ -84,6 +78,9 @@
  * The basic configuration for an experiment for a specific core.
  */
 typedef struct config_root{
+	// Number of microseconds between experiment ticks
+	uint tick_microseconds;
+	
 	// Number of timer ticks to complete before statistics are recorded from the
 	// network.
 	uint warmup_duration;
@@ -109,6 +106,10 @@ typedef struct config_root{
 	// array in SDRAM. These entries are always maintained in ascending order of
 	// routing key to allow efficient searching.
 	uint num_sinks;
+	
+	// The number of router entries to populate for the experiment. Immediately
+	// follows the config_sink array in SDRAM.
+	uint num_router_entries;
 } config_root_t;
 
 
@@ -136,6 +137,9 @@ typedef struct config_source {
 	} temporal_dist_data;
 	
 	// (Result) The number of packets generated (though sending may fail)
+	uint result_packets_generated;
+	
+	// (Result) The number of packets successfuly placed into the network
 	uint result_packets_sent;
 } config_source_t;
 
@@ -154,6 +158,21 @@ typedef struct config_sink {
 	// (Result) The number of packets which arrived with this key
 	uint result_packets_arrived;
 } config_sink_t;
+
+
+/**
+ * A structure which defines routing entries used by the experiment.
+ */
+typedef struct config_router_entry {
+	// Key to match
+	uint key;
+	
+	// Mask for key bits
+	uint mask;
+	
+	// Route bits to forward packets with matching keys
+	uint route;
+} config_router_entry_t;
 
 
 
