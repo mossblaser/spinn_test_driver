@@ -14,60 +14,15 @@
 
 
 /******************************************************************************
- * Coremap Generation
+ * Chip-wide experiment spec loading.
  ******************************************************************************/
 
 /**
- * Set up the core map for the currently selected system in the header.
+ * The size of the system and the core map.
  */
-static void init_core_map(void);
-
-// A bitmap which specifies NUM_CORES application processors as members of the
-// coremap.
-#define ALL_CORE_MASK (((1u<<NUM_CORES)-1u) << 1)
-
-#ifndef SHAPE_HEXAGONAL
-	// Define a core map of the given size with all cores active.
-	uint core_map[SYSTEM_WIDTH][SYSTEM_HEIGHT];
-	
-	/**
-	 * Initialises the core_map with the appropriate bit mask
-	 */
-	static void
-	init_core_map(void)
-	{
-		for (int y = 0; y < SYSTEM_HEIGHT; y++)
-			for (int x = 0; x < SYSTEM_WIDTH; x++)
-				core_map[x][y] = ALL_CORE_MASK;
-	}
-#else
-	// Define a core map for a 48-node board (note that this is "upside down"
-	// as Y increases downward unlike most figures showing a 48-node board.
-	uint core_map[SYSTEM_WIDTH][SYSTEM_HEIGHT] = {
-		{ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, 0,             0,             0,             0            },
-		{ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, 0,             0,             0            },
-		{ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, 0,             0            },
-		{ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, 0            },
-		{ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK},
-		{0,             ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK},
-		{0,             0,             ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK},
-		{0,             0,             0,             ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK, ALL_CORE_MASK},
-	};
-	
-	/**
-	 * Does nothing since the core_map is preinitialised appropriately.
-	 */
-	static void
-	init_core_map(void)
-	{
-		// Nothing to do.
-	}
-#endif
-
-
-/******************************************************************************
- * Chip-wide experiment spec loading.
- ******************************************************************************/
+uint system_width;
+uint system_height;
+uint core_map[MAX_DIMENSION_SIZE*MAX_DIMENSION_SIZE];
 
 /**
  * A local copy of the experimental configuration for this core.
@@ -93,6 +48,12 @@ config_router_entry_t config_router_entries[MAX_ROUTES_PER_CORE];
 void
 load_config(void)
 {
+	// Load the core-map for this core
+	uint *core_map_root = CORE_MAP_SDRAM_ADDR;
+	system_width  = core_map_root[0];
+	system_height = core_map_root[1];
+	spin1_memcpy(core_map, &(core_map_root[2]), sizeof(uint)*system_width*system_height);
+	
 	// Load the config_root for this core
 	config_root_t *config_root_sdram_addr = CONFIG_ROOT_SDRAM_ADDR(spin1_get_core_id());
 	spin1_memcpy(&config_root, config_root_sdram_addr, sizeof(config_root_t));
@@ -126,11 +87,13 @@ load_config(void)
 	            , sizeof(config_router_entry_t) * config_root.num_router_entries
 	            );
 	
-	io_printf( IO_BUF, "Loaded root config from 0x%08x with %d sources, %d sinks and %d router entries.\n"
+	io_printf( IO_BUF, "Loaded root config from 0x%08x with %d sources, %d sinks and %d router entries and %d/%d warmup/experiment cycles.\n"
 	         , (uint)config_root_sdram_addr
 	         , config_root.num_sources
 	         , config_root.num_sinks
 	         , config_root.num_router_entries
+	         , config_root.warmup_duration
+	         , config_root.duration
 	         );
 }
 
@@ -193,8 +156,7 @@ store_results(void)
  * Router config/state access functions
  ******************************************************************************/
 
-// Router configuration block
-volatile uint *rtr_control = ((uint *)RTR_BASE_UNBUF) + RTR_CONTROL;
+static volatile uint * const rtr_unbuf = (uint *) RTR_BASE_UNBUF;
 
 // The original state of the rotuer configuration before the experiment was
 // started.
@@ -210,6 +172,11 @@ uint rtr_control_orig_state;
 void
 setup_router(void)
 {
+	// Only the core which is given routing entries to write on this chip should
+	// configure the router.
+	if (config_root.num_router_entries == 0)
+		return;
+	
 	// Install the router entries
 	for (int i = 0; i < config_root.num_router_entries; i++) {
 		if (!spin1_set_mc_table_entry( i
@@ -225,11 +192,20 @@ setup_router(void)
 	}
 	
 	// Store the current router configuration
-	rtr_control_orig_state = *rtr_control;
+	rtr_control_orig_state = rtr_unbuf[RTR_CONTROL];
+	
+	io_printf(IO_BUF, "Router Config: 0x%08x --> ", rtr_unbuf[RTR_CONTROL]);
 	
 	// Set up the packet drop timeout
-	(*rtr_control) = ((*rtr_control) & ~0xFF000000)
-	                 | (config_root.rtr_drop_e<<4 | config_root.rtr_drop_m) << 24;
+	rtr_unbuf[RTR_CONTROL] = (rtr_unbuf[RTR_CONTROL] & ~0x00FF8000u)
+	                       | (config_root.rtr_drop_e<<4 | config_root.rtr_drop_m) << 16
+	                       | 1<<15 // Re-initialise counters
+	                       ;
+	
+	io_printf(IO_BUF, "0x%08x\n", rtr_unbuf[RTR_CONTROL]);
+	
+	// Allow change to make it into the router
+	spin1_delay_us(10000);
 }
 
 
@@ -239,8 +215,18 @@ setup_router(void)
 void
 cleanup_router(void)
 {
-	// Restore router configuration
-	(*rtr_control) = rtr_control_orig_state;
+	// Only the core which is given routing entries to write on this chip should
+	// configure the router.
+	if (config_root.num_router_entries == 0)
+		return;
+	
+	// Restore router configuration (and reinitialise timers to clear deadlocks)
+	rtr_unbuf[RTR_CONTROL] = rtr_control_orig_state | 1<<15;
+	spin1_delay_us(10000);
+	
+	// Set the timer reset bit back to the original value again
+	rtr_unbuf[RTR_CONTROL] = rtr_control_orig_state;
+	spin1_delay_us(10000);
 }
 
 
@@ -384,23 +370,16 @@ on_mc_packet_received(uint key, uint payload)
 void
 c_main()
 {
-	// Check that enough (application) cores are working...
-	if (sv->num_cpus - 1 < NUM_CORES) {
-		io_printf(IO_STD, "Insufficient working application cores (%d), need at least %d.\n"
-		         , sv->num_cpus - 1
-		         , NUM_CORES
-		         );
-	}
+	// Copy this core's experimental configuration from SDRAM
+	load_config();
 	
-	// Load up the core map
-	init_core_map();
-	spin1_application_core_map(SYSTEM_WIDTH, SYSTEM_HEIGHT, core_map);
+	// Set up the core map
+	spin1_application_core_map( system_width, system_height
+	                          , (uint (*)[system_height])&core_map[0]
+	                          );
 	
 	// Accept packets freely from the network
 	spin1_callback_on(MC_PACKET_RECEIVED, on_mc_packet_received, -1);
-	
-	// Load this core's experimental configuration from SDRAM
-	load_config();
 	
 	// Set up timer
 	spin1_set_timer_tick(config_root.tick_microseconds);

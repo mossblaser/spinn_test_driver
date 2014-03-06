@@ -14,37 +14,6 @@
 #define BLINK_LED 1
 
 
-/**
- * Size/shape of the system (used to generate the core map)
- */
-// Uncomment if using one 48-node board
-//#define SHAPE_HEXAGONAL
-
-#ifndef SHAPE_HEXAGONAL
-// Size of the system (in chips)
-#define SYSTEM_WIDTH  2
-#define SYSTEM_HEIGHT 2
-#else
-// Size is fixed for hexagonal systems. Do not change.
-#define SYSTEM_WIDTH  12
-#define SYSTEM_HEIGHT 12
-#endif
-
-
-
-/**
- * The number of cores involved per chip in a given experiment.
- */
-#define NUM_CORES 16u
-
-
-
-/**
- * The number of cores involved per chip in a given experiment.
- */
-#define NUM_CORES 16u
-
-
 /******************************************************************************
  * Config structures loaded into the shared SDRAM
  ******************************************************************************/
@@ -56,12 +25,24 @@
 #define MAX_SOURCES_PER_CORE 256u
 #define MAX_SINKS_PER_CORE   256u
 #define MAX_ROUTES_PER_CORE  1000u
+#define MAX_DIMENSION_SIZE   24u
+
+/**
+ * A macro defining the address of the coremap in memory. The first two words
+ * after this address define the width and height of the system in chips and
+ * after this point represent an array [width][height] of uints containing the
+ * core map.
+ */
+#define CORE_MAP_SDRAM_ADDR ((uint *)(SDRAM_BASE_UNBUF))
 
 /**
  * A macro which yields the address in SDRAM of a core's config_root. Core 1
- * will have its config root at the base of SDRAM.
+ * will have its config root at the base of SDRAM after the core map.
  */
 #define CONFIG_ROOT_SDRAM_ADDR(core) ( (config_root_t *)((SDRAM_BASE_UNBUF)          \
+                                       + ( (MAX_DIMENSION_SIZE*MAX_DIMENSION_SIZE+2) \
+                                         * sizeof(uint)                              \
+                                         )                                           \
                                        + (core-1) * ( sizeof(config_root_t)          \
                                                     + sizeof(config_source_t)        \
                                                       * MAX_SOURCES_PER_CORE         \
@@ -173,8 +154,6 @@ typedef struct config_router_entry {
 	// Route bits to forward packets with matching keys
 	uint route;
 } config_router_entry_t;
-
-
 
 
 #endif /* SPINN_TEST_DRIVER_H */

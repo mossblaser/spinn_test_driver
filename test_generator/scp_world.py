@@ -23,6 +23,8 @@ chips = model.make_rectangular_board(2,2)
 # Remove monitor cores
 for router, cores in chips.itervalues():
 	del cores[0]
+# Remove chip (1,1), why not!
+del chips[(1,1)]
 
 # Connect from (0,0,1) to all (non-monitor) cores on every chip.
 routing_key = 0xDEADBEEF
@@ -53,8 +55,7 @@ duration = 3.0
 tick_period = 1000
 
 # Set up the experiment structs and routing tables
-for chip_y in range(2):
-	for chip_x in range(2):
+for (chip_x,chip_y) in chips.iterkeys():
 		load_ybug_commands += "sp %d %d 0\n"%(chip_x, chip_y)
 		dump_ybug_commands += "sp %d %d 0\n"%(chip_x, chip_y)
 		
@@ -64,8 +65,8 @@ for chip_y in range(2):
 			config_root = config_root_t.pack( tick_period # tick_microseconds
 			                                , (1000000.0/tick_period) * warmup # Warmup duration
 			                                , (1000000.0/tick_period) * duration # Experiment duration
-			                                , 0 # rtr_drop_e
-			                                , 1 # rtr_drop_m
+			                                , 5 # rtr_drop_e
+			                                , 0 # rtr_drop_m
 			                                , 0 # result_dropped_packets
 			                                , 0 # result_forwarded_packets
 			                                , int((chip_x,chip_y,core) == (0,0,1)) # num_sources
@@ -92,13 +93,22 @@ for chip_y in range(2):
 			
 			configs[(chip_x, chip_y, core)] = config
 
+# Calculate the coremap
+core_map = {}
+for ((x,y), (router, cores)) in chips.iteritems():
+	core_map[(x,y)] = sum(1<<c.core_id for c in cores)
+core_map_packed = core_map_struct_pack(core_map)
+
+# Write the coremap into the DRAM of every chip
+for coords in chips.iterkeys():
+	conn.selected_node_coords = coords
+	conn.write_mem(core_map_sdram_addr(), scp.TYPE_BYTE, core_map_packed)
 
 # Write the configs into DRAM
 for coords, config in configs.iteritems():
 	x,y,core = coords
 	conn.selected_cpu_coords = coords
 	conn.write_mem(config_root_sdram_addr(core), scp.TYPE_BYTE, config)
-
 
 # Load and run the application on all cores
 for (x,y) in chips.iterkeys():
@@ -115,7 +125,7 @@ for (x,y) in chips.iterkeys():
 	conn.reset_aplx(core_mask, 16)
 
 # Allow experiment to run
-time.sleep(warmup + duration + 2.0)
+time.sleep(warmup + duration + 1.0)
 
 # Read the results back from DRAM
 num_diff = 0
@@ -126,3 +136,7 @@ for coords, config in configs.iteritems():
 	if read_config != config:
 		num_diff+=1
 print "%d cores wrote some results"%num_diff
+
+if num_diff == 0:
+	import sys
+	sys.exit(-1)
