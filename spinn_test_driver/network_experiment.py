@@ -243,6 +243,17 @@ class NetworkExperiment(object):
 		return route.key
 	
 	
+	def _write_mem_with_retry(self, conn, *args, **kwargs):
+		num_retries = 10
+		for retry in xrange(num_retries):
+			try:
+				return conn.write_mem(*args, **kwargs)
+			except:
+				time.sleep(0.01)
+				if retry == num_retries - 1:
+					raise
+	
+	
 	def _load_coremaps(self, conn):
 		"""
 		Generate the coremap for the system and write it to every chip.
@@ -257,7 +268,7 @@ class NetworkExperiment(object):
 		# Load onto system
 		for (x,y), chip in self.chips.iteritems():
 			conn.selected_cpu_coords = (x,y,0)
-			conn.write_mem(addr, scp.TYPE_BYTE, data)
+			self._write_mem_with_retry(conn, addr, scp.TYPE_BYTE, data)
 	
 	
 	def _load_configs(self, conn):
@@ -356,7 +367,7 @@ class NetworkExperiment(object):
 				# Load this core's configuration
 				addr = spinnaker_app.config_root_sdram_addr(core.core_id)
 				data = config
-				conn.write_mem(addr, scp.TYPE_BYTE, data)
+				self._write_mem_with_retry(conn, addr, scp.TYPE_BYTE, data)
 	
 	
 	def _run_app(self, conn):
@@ -371,10 +382,11 @@ class NetworkExperiment(object):
 			
 			# Load the APLX into memory
 			# XXX: Shouldn't this be defined in the SCP module...
-			conn.write_mem( 0x67800000
-			              , scp.TYPE_WORD
-			              , open(spinnaker_app.SPINNAKER_APP_APLX,"rb").read()
-			              )
+			self._write_mem_with_retry(conn
+			                          , 0x67800000
+			                          , scp.TYPE_WORD
+			                          , open(spinnaker_app.SPINNAKER_APP_APLX,"rb").read()
+			                          )
 		
 		# Start the app on all cores
 		for (x,y), chip in self.chips.iteritems():
@@ -404,6 +416,7 @@ class NetworkExperiment(object):
 						sys.stderr.write("Waiting for core %d,%d:%d...\n"%(x,y,core_id))
 					elif completion_state == spinnaker_app.COMPLETION_STATE_SUCCESS:
 						# Move onto the next chip
+						sys.stderr.write("Success for core %d,%d:%d...\n"%(x,y,core_id))
 						break
 					else:
 						# Something failed!
