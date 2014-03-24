@@ -392,19 +392,14 @@ class NetworkExperiment(object):
 		for (x,y), chip in self.chips.iteritems():
 			conn.selected_cpu_coords = (x,y,0)
 			for core_id, core in chip.cores.iteritems():
-				timeout = 10
 				while True:
 					addr = spinnaker_app.config_root_sdram_addr(core_id)
 					data = conn.read_mem(addr, scp.TYPE_BYTE, spinnaker_app.completion_state_t.size)
 					completion_state = spinnaker_app.completion_state_t.unpack(data)[0]
 					
 					if completion_state == spinnaker_app.COMPLETION_STATE_RUNNING:
-						# Wait a bit longer before timing out
+						# Wait a bit longer...
 						time.sleep(0.1)
-						timeout -= 1
-						if timeout <= 0:
-							bad_cores.append(core)
-							break
 					elif completion_state == spinnaker_app.COMPLETION_STATE_SUCCESS:
 						# Move onto the next chip
 						break
@@ -415,7 +410,7 @@ class NetworkExperiment(object):
 		
 		# If any cores failed, throw an exception
 		if bad_cores:
-			raise ExperimentFailed("%d cores reported failiure or timed out while executing the experiment."%len(bad_cores), bad_cores)
+			raise ExperimentFailed("%d cores reported failiure while executing the experiment."%len(bad_cores), bad_cores)
 	
 	
 	def _collect_results(self, conn):
