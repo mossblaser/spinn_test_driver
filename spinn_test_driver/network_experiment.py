@@ -271,23 +271,25 @@ class NetworkExperiment(object):
 			num_router_entries, router_entries = \
 				spinn_route.table_gen.spin1_table_gen(chip.router)
 			
-			# Ensure we don't have too many sources/sinks/routing entries
+			# Ensure we don't have too many routing entries
 			if num_router_entries > spinnaker_app.MAX_ROUTES_PER_CORE:
 				raise Exception("Too many router entries on a single core: %d (max %d)"%(
 					num_router_entries, spinnaker_app.MAX_ROUTES_PER_CORE
-				))
-			if len(self.core_generators[core]) > spinnaker_app.MAX_SOURCES_PER_CORE:
-				raise Exception("Too many sources on a single core: %d (max %d)"%(
-					len(self.core_generators[core]), spinnaker_app.MAX_SOURCES_PER_CORE
-				))
-			if len(self.core_consumers[core]) > spinnaker_app.MAX_SINKS_PER_CORE:
-				raise Exception("Too many sinks on a single core: %d (max %d)"%(
-					len(self.core_consumers[core]), spinnaker_app.MAX_SINKS_PER_CORE
 				))
 			
 			for index, core in enumerate(chip.cores.itervalues()):
 				# Arbitarily choose one core to load the routing tables
 				loads_router_enties = index == 0
+				
+				# Ensure we don't have too many sources/sinks
+				if len(self.core_generators[core]) > spinnaker_app.MAX_SOURCES_PER_CORE:
+					raise Exception("Too many sources on a single core: %d (max %d)"%(
+						len(self.core_generators[core]), spinnaker_app.MAX_SOURCES_PER_CORE
+					))
+				if len(self.core_consumers[core]) > spinnaker_app.MAX_SINKS_PER_CORE:
+					raise Exception("Too many sinks on a single core: %d (max %d)"%(
+						len(self.core_consumers[core]), spinnaker_app.MAX_SINKS_PER_CORE
+					))
 				
 				# The root block of the configuration 
 				config_root = spinnaker_app.config_root_t.pack(*spinnaker_app.config_root_tuple(
