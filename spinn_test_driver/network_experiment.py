@@ -37,7 +37,7 @@ InstantConsumption = namedtuple("InstantConsumption", [])
 ChipResults = namedtuple("ChipResults", ["router","cores"])
 
 # Contained by the router and cores items respectively in ChipResults
-RouterResults = namedtuple("RouterResults", ["dropped_packets","forwarded_packets"])
+RouterResults = namedtuple("RouterResults", ["dropped_packets","forwarded_packets","num_router_entries"])
 CoreResults   = namedtuple("CoreResults",   ["sources", "sinks"])
 
 # Contained by the sources and sinks items respectively in CoreResults
@@ -469,8 +469,9 @@ class NetworkExperiment(object):
 				
 				# Extract the router results
 				if downloads_router_results:
-					router_results = RouterResults( forwarded_packets = config_root.result_forwarded_packets
-					                              , dropped_packets   = config_root.result_dropped_packets
+					router_results = RouterResults( forwarded_packets  = config_root.result_forwarded_packets
+					                              , dropped_packets    = config_root.result_dropped_packets
+					                              , num_router_entries = config_root.num_router_entries
 					                              )
 				sources = {}
 				sinks   = {}
