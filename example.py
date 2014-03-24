@@ -70,7 +70,7 @@ fanout = float(dests)/float(sources)
 
 
 # Set the period between ticks
-experiment.tick_period = 1.000
+experiment.tick_period = 0.001
 
 # Set the router timeout
 experiment.router_timeout = 512

@@ -318,7 +318,8 @@ class NetworkExperiment(object):
 						result_packets_sent      = 0,
 					))
 				
-				# Define the packet sinks
+				# Define the packet sinks (which must be supplied in ascending order of
+				# routing key)
 				config_sinks = ""
 				for route in sorted(self.core_consumers[core]):
 					con = self.core_consumers[core][route]

@@ -379,8 +379,8 @@ on_timer_tick(uint _1, uint _2)
 void
 on_mc_packet_received(uint key, uint payload)
 {
-	// During warmup, no results need be recorded.
-	if (simulation_warmup)
+	// During warmup and upon completion, no results need be recorded.
+	if (simulation_warmup || simulation_ticks >= config_root.duration)
 		return;
 	
 	// Binary search variables
