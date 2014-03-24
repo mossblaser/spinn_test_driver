@@ -30,7 +30,20 @@ MAX_SINKS_PER_CORE   = 256
 MAX_ROUTES_PER_CORE  = 1000
 MAX_DIMENSION_SIZE   = 24
 
+# Allowable values of completion_state
+COMPLETION_STATE_RUNNING  = 0
+COMPLETION_STATE_SUCCESS  = 1
+COMPLETION_STATE_FAILIURE = 2
+
+
+# Just the completion_state field of the config_root
+completion_state_t = struct.Struct( "<" # Little endian, standard sizes (i.e. 2-byte short, 4-byte int)
+                                  + "I" # enum   completion_state
+                                  )
+
+
 config_root_t = struct.Struct( "<" # Little endian, standard sizes (i.e. 2-byte short, 4-byte int)
+                             + "I" # enum   completion_state
                              + "I" # uint   seed
                              + "I" # uint   tick_microseconds
                              + "I" # uint   warmup_duration
@@ -44,7 +57,8 @@ config_root_t = struct.Struct( "<" # Little endian, standard sizes (i.e. 2-byte 
                              + "I" # uint   num_router_entries
                              )
 config_root_tuple = namedtuple( "config_root_tuple"
-                              , [ "seed"
+                              , [ "completion_state"
+                                , "seed"
                                 , "tick_microseconds"
                                 , "warmup_duration"
                                 , "duration"

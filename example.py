@@ -50,12 +50,10 @@ sources = 0
 dests   = 0
 for chip in chips.itervalues():
 	for core_id, source_core in chip.cores.iteritems():
-		if core_id > 5:
-			continue
-		# Select every corresponding core
-		dest_cores = [c.cores[core_id] for c in chips.itervalues()]
+		# Select every other core
+		dest_cores = sum((c.cores.values() for c in chips.itervalues()), [])
 		
-		gen = network_experiment.BernoulliGeneration(1.00)
+		gen = network_experiment.BernoulliGeneration(0.10)
 		con = network_experiment.InstantConsumption()
 		
 		# Add the stream

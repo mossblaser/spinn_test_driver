@@ -118,14 +118,6 @@ store_results(void)
 	if (leadAp)
 		spin1_led_control(LED_ON(BLINK_LED));
 	
-	// Record router counters
-	config_root.result_forwarded_packets = rtr_unbuf[FWD_CNTR_CNT];
-	config_root.result_dropped_packets   = rtr_unbuf[DRP_CNTR_CNT];
-	
-	// Copy root config results back.
-	config_root_t *config_root_sdram_addr = CONFIG_ROOT_SDRAM_ADDR(spin1_get_core_id());
-	spin1_memcpy(config_root_sdram_addr, &config_root, sizeof(config_root_t));
-	
 	// Copy source results back.
 	config_source_t *config_sources_sdram_addr = (config_source_t *)( ((uint)CONFIG_ROOT_SDRAM_ADDR(spin1_get_core_id()))
 	                                                                  + sizeof(config_root_t)
@@ -146,6 +138,15 @@ store_results(void)
 	            , &config_sinks
 	            , sizeof(config_sink_t) * config_root.num_sinks
 	            );
+	
+	// Record router counters
+	config_root.result_forwarded_packets = rtr_unbuf[FWD_CNTR_CNT];
+	config_root.result_dropped_packets   = rtr_unbuf[DRP_CNTR_CNT];
+	
+	// Copy root config results back last so that the completion_state is only
+	// updated when most of the data is coppied back.
+	config_root_t *config_root_sdram_addr = CONFIG_ROOT_SDRAM_ADDR(spin1_get_core_id());
+	spin1_memcpy(config_root_sdram_addr, &config_root, sizeof(config_root_t));
 	
 	// Note that routes are not copied back because they aren't changed.
 	
@@ -188,6 +189,7 @@ setup_router(void)
 			         , i
 			         , config_router_entries[i].key
 			         );
+			config_root.completion_state = COMPLETION_STATE_FAILIURE;
 		}
 	}
 	
@@ -292,6 +294,7 @@ generate_packet(uint source_index)
 		         , simulation_ticks
 		         , simulation_warmup ? "warmup" : "post-warmup"
 		         );
+		config_root.completion_state = COMPLETION_STATE_FAILIURE;
 	}
 }
 
@@ -327,6 +330,9 @@ on_timer_tick(uint _1, uint _2)
 		if (leadAp)
 			rtr_unbuf[RTR_DGEN] &= ~(FWD_CNTR_BIT | DRP_CNTR_BIT);
 		
+		if (config_root.completion_state != COMPLETION_STATE_FAILIURE)
+			config_root.completion_state = COMPLETION_STATE_SUCCESS;
+		
 		spin1_stop();
 		return;
 	}
@@ -358,6 +364,7 @@ on_timer_tick(uint _1, uint _2)
 				         , config_sources[i].temporal_dist
 				         , config_sources[i].routing_key
 				         );
+				config_root.completion_state = COMPLETION_STATE_FAILIURE;
 				break;
 		}
 	}
@@ -402,6 +409,7 @@ on_mc_packet_received(uint key, uint payload)
 		config_sinks[cursor].result_packets_arrived++;
 	} else {
 		io_printf(IO_BUF, "Got unexpected packet with routing key = 0x%08x.\n", key);
+		config_root.completion_state = COMPLETION_STATE_FAILIURE;
 	}
 }
 

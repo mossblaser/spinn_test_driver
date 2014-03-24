@@ -49,6 +49,15 @@ SinkResults   = namedtuple("SinkResults",   ["packets_arrived"])
 # Experiment object
 ################################################################################
 
+class ExperimentFailed(Exception):
+	"""
+	Exception thrown when the experiment being run reports a failiure.
+	"""
+	def __init__(self, msg, bad_cores):
+		Exception.__init__(self, msg)
+		self.bad_cores = bad_cores
+
+
 class NetworkExperiment(object):
 	"""
 	A particular network experiment.
@@ -282,6 +291,7 @@ class NetworkExperiment(object):
 				
 				# The root block of the configuration 
 				config_root = spinnaker_app.config_root_t.pack(*spinnaker_app.config_root_tuple(
+					completion_state         = spinnaker_app.COMPLETION_STATE_RUNNING,
 					seed                     = random.getrandbits(32),
 					tick_microseconds        = self._tick_period,
 					warmup_duration          = int(self._warmup/self.tick_period),
@@ -371,9 +381,39 @@ class NetworkExperiment(object):
 			core_mask = sum(1<<core_id for core_id in chip.cores.iterkeys())
 			conn.reset_aplx(core_mask, 16)
 		
-		# Wait for experiment to finish.
-		# XXX: Currently just sleep long enough for the experiment to run...
-		time.sleep(self.warmup + self.duration + 1.5)
+		# Wait until when the experiment is expected to have finished.
+		time.sleep(self.warmup + self.duration + 0.1)
+		
+		# Explicitly check cores until every core reports completion, create a list
+		# of bad cores.
+		bad_cores = []
+		for (x,y), chip in self.chips.iteritems():
+			conn.selected_cpu_coords = (x,y,0)
+			for core_id, core in chip.cores.iteritems():
+				timeout = 10
+				while True:
+					addr = spinnaker_app.config_root_sdram_addr(core_id)
+					data = conn.read_mem(addr, scp.TYPE_BYTE, spinnaker_app.completion_state_t.size)
+					completion_state = spinnaker_app.completion_state_t.unpack(data)[0]
+					
+					if completion_state == spinnaker_app.COMPLETION_STATE_RUNNING:
+						# Wait a bit longer before timing out
+						time.sleep(0.1)
+						timeout -= 1
+						if timeout <= 0:
+							bad_cores.append(core)
+							break
+					elif completion_state == spinnaker_app.COMPLETION_STATE_SUCCESS:
+						# Move onto the next chip
+						break
+					else:
+						# Something failed!
+						bad_cores.append(core)
+						break
+		
+		# If any cores failed, throw an exception
+		if bad_cores:
+			raise ExperimentFailed("%d cores reported failiure or timed out while executing the experiment."%len(bad_cores), bad_cores)
 	
 	
 	def _collect_results(self, conn):

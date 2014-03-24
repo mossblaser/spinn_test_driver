@@ -67,10 +67,25 @@
                                      )
 
 
+
+/**
+ * Completion states of the system.
+ */
+typedef enum completion_state {
+	COMPLETION_STATE_RUNNING  = 0,
+	COMPLETION_STATE_SUCCESS  = 1,
+	COMPLETION_STATE_FAILIURE = 2,
+} completion_state_t;
+
+
 /**
  * The basic configuration for an experiment for a specific core.
  */
 typedef struct config_root{
+	// Indicator of completion of this core in its execution of the experiment.
+	// Guarunteed to be the first element in the config root
+	completion_state_t completion_state;
+	
 	// A seed for the random number generator on this core.
 	uint seed;
 	
