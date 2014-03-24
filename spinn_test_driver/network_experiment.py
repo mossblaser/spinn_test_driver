@@ -5,6 +5,7 @@ A wrapper which deals with many of the details of producing and running network
 experiments.
 """
 
+import sys
 import math
 import time
 import random
@@ -399,7 +400,8 @@ class NetworkExperiment(object):
 					
 					if completion_state == spinnaker_app.COMPLETION_STATE_RUNNING:
 						# Wait a bit longer...
-						time.sleep(0.1)
+						time.sleep(1)
+						sys.stderr.write("Waiting for core %d,%d:%d...\n"%(x,y,core_id))
 					elif completion_state == spinnaker_app.COMPLETION_STATE_SUCCESS:
 						# Move onto the next chip
 						break
