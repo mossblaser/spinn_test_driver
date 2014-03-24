@@ -276,13 +276,13 @@ class NetworkExperiment(object):
 				raise Exception("Too many router entries on a single core: %d (max %d)"%(
 					num_router_entries, spinnaker_app.MAX_ROUTES_PER_CORE
 				))
-			if len(self.core_generators) > spinnaker_app.MAX_SOURCES_PER_CORE:
+			if len(self.core_generators[core]) > spinnaker_app.MAX_SOURCES_PER_CORE:
 				raise Exception("Too many sources on a single core: %d (max %d)"%(
-					len(self.core_generators), spinnaker_app.MAX_SOURCES_PER_CORE
+					len(self.core_generators[core]), spinnaker_app.MAX_SOURCES_PER_CORE
 				))
-			if len(self.core_consumers) > spinnaker_app.MAX_SINKS_PER_CORE:
+			if len(self.core_consumers[core]) > spinnaker_app.MAX_SINKS_PER_CORE:
 				raise Exception("Too many sinks on a single core: %d (max %d)"%(
-					len(self.core_consumers), spinnaker_app.MAX_SINKS_PER_CORE
+					len(self.core_consumers[core]), spinnaker_app.MAX_SINKS_PER_CORE
 				))
 			
 			for index, core in enumerate(chip.cores.itervalues()):
