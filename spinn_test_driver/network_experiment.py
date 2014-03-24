@@ -411,9 +411,17 @@ class NetworkExperiment(object):
 					completion_state = spinnaker_app.completion_state_t.unpack(data)[0]
 					
 					if completion_state == spinnaker_app.COMPLETION_STATE_RUNNING:
+						# Make sure the chip is actually up
+						try:
+							conn.version()
+						except:
+							bad_cores.append(core)
+							break
+						
 						# Wait a bit longer...
 						time.sleep(1)
 						sys.stderr.write("Waiting for core %d,%d:%d...\n"%(x,y,core_id))
+						
 					elif completion_state == spinnaker_app.COMPLETION_STATE_SUCCESS:
 						# Move onto the next chip
 						sys.stderr.write("Success for core %d,%d:%d...\n"%(x,y,core_id))
