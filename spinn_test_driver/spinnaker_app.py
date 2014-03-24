@@ -5,6 +5,7 @@ Definitions of the structs used to store experimental parameters and results in
 the SpiNNaker-based test driver program.
 """
 
+import os
 import struct
 
 from collections import namedtuple
@@ -30,6 +31,7 @@ MAX_ROUTES_PER_CORE  = 1000
 MAX_DIMENSION_SIZE   = 24
 
 config_root_t = struct.Struct( "<" # Little endian, standard sizes (i.e. 2-byte short, 4-byte int)
+                             + "I" # uint   seed
                              + "I" # uint   tick_microseconds
                              + "I" # uint   warmup_duration
                              + "I" # uint   duration
@@ -42,7 +44,8 @@ config_root_t = struct.Struct( "<" # Little endian, standard sizes (i.e. 2-byte 
                              + "I" # uint   num_router_entries
                              )
 config_root_tuple = namedtuple( "config_root_tuple"
-                              , [ "tick_microseconds"
+                              , [ "seed"
+                                , "tick_microseconds"
                                 , "warmup_duration"
                                 , "duration"
                                 , "rtr_drop_e"
@@ -164,3 +167,7 @@ def config_root_sdram_addr(core):
 	                      * MAX_ROUTES_PER_CORE
 	                    )
 	       )
+
+
+# The path of the compiled SpiNNaker app APLX file.
+SPINNAKER_APP_APLX = os.path.join(os.path.dirname(__file__), "..", "spinnaker_app/spinn_test_driver.aplx")

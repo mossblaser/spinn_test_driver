@@ -12,6 +12,8 @@
 #define MIN(a,b) (((a)<(b)) ? (a) : (b))
 #define MAX(a,b) (((a)<(b)) ? (b) : (a))
 
+static volatile uint * const rtr_unbuf = (uint *) RTR_BASE_UNBUF;
+
 
 /******************************************************************************
  * Chip-wide experiment spec loading.
@@ -57,6 +59,9 @@ load_config(void)
 	// Load the config_root for this core
 	config_root_t *config_root_sdram_addr = CONFIG_ROOT_SDRAM_ADDR(spin1_get_core_id());
 	spin1_memcpy(&config_root, config_root_sdram_addr, sizeof(config_root_t));
+	
+	// Seed the random number generator
+	spin1_srand(config_root.seed);
 	
 	// Calculate the address of the source & sink arrays and copy them across.
 	config_source_t *config_sources_sdram_addr = (config_source_t *)(
@@ -113,7 +118,9 @@ store_results(void)
 	if (leadAp)
 		spin1_led_control(LED_ON(BLINK_LED));
 	
-	// TODO: Read counters
+	// Record router counters
+	config_root.result_forwarded_packets = rtr_unbuf[FWD_CNTR_CNT];
+	config_root.result_dropped_packets   = rtr_unbuf[DRP_CNTR_CNT];
 	
 	// Copy root config results back.
 	config_root_t *config_root_sdram_addr = CONFIG_ROOT_SDRAM_ADDR(spin1_get_core_id());
@@ -156,8 +163,6 @@ store_results(void)
  * Router config/state access functions
  ******************************************************************************/
 
-static volatile uint * const rtr_unbuf = (uint *) RTR_BASE_UNBUF;
-
 // The original state of the rotuer configuration before the experiment was
 // started.
 uint rtr_control_orig_state;
@@ -172,11 +177,6 @@ uint rtr_control_orig_state;
 void
 setup_router(void)
 {
-	// Only the core which is given routing entries to write on this chip should
-	// configure the router.
-	if (config_root.num_router_entries == 0)
-		return;
-	
 	// Install the router entries
 	for (int i = 0; i < config_root.num_router_entries; i++) {
 		if (!spin1_set_mc_table_entry( i
@@ -191,18 +191,47 @@ setup_router(void)
 		}
 	}
 	
-	// Store the current router configuration
-	rtr_control_orig_state = rtr_unbuf[RTR_CONTROL];
-	
-	io_printf(IO_BUF, "Router Config: 0x%08x --> ", rtr_unbuf[RTR_CONTROL]);
-	
-	// Set up the packet drop timeout
-	rtr_unbuf[RTR_CONTROL] = (rtr_unbuf[RTR_CONTROL] & ~0x00FF8000u)
-	                       | (config_root.rtr_drop_e<<4 | config_root.rtr_drop_m) << 16
-	                       | 1<<15 // Re-initialise counters
-	                       ;
-	
-	io_printf(IO_BUF, "0x%08x\n", rtr_unbuf[RTR_CONTROL]);
+	// Only one core should configure the router
+	if (leadAp) {
+		// Store the current router configuration
+		rtr_control_orig_state = rtr_unbuf[RTR_CONTROL];
+		
+		// Set up the packet drop timeout
+		rtr_unbuf[RTR_CONTROL] = (rtr_unbuf[RTR_CONTROL] & ~0x00FF8000u)
+		                       | (config_root.rtr_drop_e<<4 | config_root.rtr_drop_m) << 16
+		                       | 1<<15 // Re-initialise counters
+		                       ;
+		
+		// Configure forwarded packets counter
+		rtr_unbuf[FWD_CNTR_CFG] = (0x1<< 0) // Type = nn
+		                        | (0x1<< 4) // ER = 0 (non-emergency-routed packets)
+		                        | (  0<< 8) // M = 0 (match emergency flag on incoming packets)
+		                        | (0x3<<10) // Def = Match default and non-default routed packets
+		                        | (0x3<<12) // PL = Match packets with and without payloads
+		                        | (0x3<<14) // Loc = Match local and external packets
+		                        | ( (0x1F<<19) // Match all external links
+		                          | (   0<<18) // Don't match monitor packets
+		                          | (   1<<17) // Match packets to local non-monitor cores
+		                          | (   0<<16) // Don't match dropped packets
+		                          ) // Dest = Which destinations should be matched
+		                        | (  0<<30) // E = Don't enable interrupt on event
+		                        ;
+		
+		// Configure dropped packets counter
+		rtr_unbuf[DRP_CNTR_CFG] = (0x1<< 0) // Type = nn
+		                        | (0x1<< 4) // ER = 0 (non-emergency-routed packets)
+		                        | (  0<< 8) // M = 0 (match emergency flag on incoming packets)
+		                        | (0x3<<10) // Def = Match default and non-default routed packets
+		                        | (0x3<<12) // PL = Match packets with and without payloads
+		                        | (0x3<<14) // Loc = Match local and external packets
+		                        | ( (0x00<<19) // Don't match external links
+		                          | (   0<<18) // Don't match monitor packets
+		                          | (   0<<17) // Don't match packets to local non-monitor cores
+		                          | (   1<<16) // Match dropped packets
+		                          ) // Dest = Which destinations should be matched
+		                        | (  0<<30) // E = Don't enable interrupt on event
+		                        ;
+	}
 	
 	// Allow change to make it into the router
 	spin1_delay_us(10000);
@@ -215,18 +244,16 @@ setup_router(void)
 void
 cleanup_router(void)
 {
-	// Only the core which is given routing entries to write on this chip should
-	// configure the router.
-	if (config_root.num_router_entries == 0)
-		return;
-	
-	// Restore router configuration (and reinitialise timers to clear deadlocks)
-	rtr_unbuf[RTR_CONTROL] = rtr_control_orig_state | 1<<15;
-	spin1_delay_us(10000);
-	
-	// Set the timer reset bit back to the original value again
-	rtr_unbuf[RTR_CONTROL] = rtr_control_orig_state;
-	spin1_delay_us(10000);
+	// Only one core should restore the router config.
+	if (leadAp) {
+		// Restore router configuration (and reinitialise timers to clear deadlocks)
+		rtr_unbuf[RTR_CONTROL] = rtr_control_orig_state | 1<<15;
+		spin1_delay_us(10000);
+		
+		// Set the timer reset bit back to the original value again
+		rtr_unbuf[RTR_CONTROL] = rtr_control_orig_state;
+		spin1_delay_us(10000);
+	}
 }
 
 
@@ -277,18 +304,34 @@ on_timer_tick(uint _1, uint _2)
 {
 	// Experiment management
 	if (simulation_warmup && simulation_ticks == 0) {
+		// Start of warmup
 		io_printf(IO_BUF, "Warmup starting...\n");
-		simulation_ticks ++;
-	} else if (simulation_warmup && simulation_ticks >= config_root.warmup_duration) {
+	}
+	
+	// Start of warmup, start of experiment
+	if (simulation_warmup && simulation_ticks >= config_root.warmup_duration) {
 		simulation_ticks = 0u;
 		simulation_warmup = false;
 		io_printf(IO_BUF, "Warmup ended, starting main experiment...\n");
-	} else if (!simulation_warmup && simulation_ticks >= config_root.duration) {
+		
+		// Reset and enable counters
+		if (leadAp)
+			rtr_unbuf[RTR_DGEN] |=  (FWD_CNTR_BIT | DRP_CNTR_BIT)
+			                     | ((FWD_CNTR_BIT | DRP_CNTR_BIT)<<16)
+			                     ;
+	}
+	
+	// End of experiment
+	if (!simulation_warmup && simulation_ticks >= config_root.duration) {
+		// Disable counters
+		if (leadAp)
+			rtr_unbuf[RTR_DGEN] &= ~(FWD_CNTR_BIT | DRP_CNTR_BIT);
+		
 		spin1_stop();
 		return;
-	} else {
-		simulation_ticks ++;
 	}
+	
+	simulation_ticks ++;
 	
 	// Show current status using LEDs
 	if (leadAp) {

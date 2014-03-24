@@ -14,6 +14,18 @@
 #define BLINK_LED 1
 
 
+/**
+ * Macros for accessing the router's diagnostic counters.
+ */
+#define FWD_CNTR_CFG RTR_DGF12
+#define FWD_CNTR_CNT RTR_DGC12
+#define FWD_CNTR_BIT    (1<<12)
+
+#define DRP_CNTR_CFG RTR_DGF13
+#define DRP_CNTR_CNT RTR_DGC13
+#define DRP_CNTR_BIT    (1<<13)
+
+
 /******************************************************************************
  * Config structures loaded into the shared SDRAM
  ******************************************************************************/
@@ -59,6 +71,9 @@
  * The basic configuration for an experiment for a specific core.
  */
 typedef struct config_root{
+	// A seed for the random number generator on this core.
+	uint seed;
+	
 	// Number of microseconds between experiment ticks
 	uint tick_microseconds;
 	
